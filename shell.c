@@ -6,18 +6,22 @@
 #include <signal.h>
 #include <string.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #define BUFF_LEN 513
 #define CMD_MAX 128 // Not expecting more than 128 tokens per command
 
-
 char buffer[BUFF_LEN];
-char *cmd[CMD_MAX];
+
 pthread_mutex_t mutex;
 pthread_cond_t await;
+
 int executing = 0;
 int running = 1;
+int background = 0;
+char *in_file_name;
+char *out_file_name;
 
 
 void err(int code, char* err){
@@ -34,30 +38,35 @@ void SIGINT_handler(){
 }
 
 
+// Handler inspired by "man 2 waitpid"
 void SIGCHLD_handler(){
-  printf("Hanling SIGCHLD\n");
-}
-
-
-void cmd_init() {
-  for (size_t i = 0; i < CMD_MAX; i++) {
-    cmd[i] = (char *)malloc(CMD_MAX);
-    if (&cmd[i] == NULL) {
-      err(-1, "malloc");
+  int status;
+  pid_t pid;
+  while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
+    printf("\n$ Process %d ", pid);
+    if (WIFEXITED(status)) {
+      printf("exited, status=%d", WEXITSTATUS(status));
+    } else if (WIFSIGNALED(status)) {
+      printf("killed by signal %d", WTERMSIG(status));
+    } else if (WIFSTOPPED(status)) {
+      printf("stopped by signal %d", WSTOPSIG(status));
     }
-    memset(cmd[i], 0, CMD_MAX);
+    printf("\n$ ");
+    fflush(stdout);
   }
 }
 
 
-void cmd_deinit() {
-  for (size_t i = 0; i < CMD_MAX; i++) {
-    free(cmd[i]);
+int jump_to_next(int i){
+  while (!isspace(buffer[i]) && buffer[i]!='\0' && i < BUFF_LEN &&
+    buffer[i] != '>' && buffer[i] != '<') {
+      ++i;
   }
+  return i;
 }
 
 
-void tokenize() {
+void tokenize(char **cmd) {
   int tokens = 0;
   for (size_t i = 0; i < BUFF_LEN; i++) {
     if (buffer[i] == '\0') {
@@ -65,34 +74,56 @@ void tokenize() {
     } else if (isspace(buffer[i])) {
       continue;
     } else {
-      int start = i;
-      while (!isspace(buffer[i]) && buffer[i]!='\0' && i < BUFF_LEN) {
+      if (strncmp(&buffer[i], "&", 1) == 0) {
+        background = 1;
         ++i;
+      } else if (strncmp(&buffer[i], ">", 1) == 0) {
+        buffer[i] = '\0';
+        ++i;
+        while(isspace(buffer[i]))
+          ++i;
+        out_file_name = &buffer[i];
+        i = jump_to_next(i);
+      } else if (strncmp(&buffer[i], "<", 1) == 0) {
+        buffer[i] = '\0';
+        ++i;
+        while(isspace(buffer[i]))
+          ++i;
+        i = jump_to_next(i);
+        in_file_name = &buffer[i];
+      } else {
+        cmd[tokens] = &buffer[i];
+        ++tokens;
+        i = jump_to_next(i);
+        if (buffer[i] == '<' || buffer[i] == '>') { // >< without spaces
+          --i;
+        } else {
+          buffer[i] = '\0';
+        }
       }
-      strncpy(cmd[tokens], &buffer[start], i-start);
-      printf("T %2d: %s\n", tokens, cmd[tokens]);
-      printf("%ld\n", strlen(cmd[tokens]) );
-      ++tokens;
     }
+  }
+  printf("IN:%s\n", in_file_name);
+  printf("OUT:%s\n", out_file_name);
+  for (int i = 0; i < tokens; i++) {
+    printf("%d: %s\n",i,cmd[i]);
   }
   cmd[tokens] = NULL;  // ! Required by execvp function
 }
 
 
-void execute() {
+void execute(char **cmd) {
   pid_t pid;
   if ((pid = fork()) < 0) {
     err(pid, "fork");
   }
 
-  if (pid > 0) {  //parent
+  if (pid > 0 && !background) {  //parent
     waitpid(pid, NULL, 0);
-  }
-
-  if (pid == 0) { //child
+  } else if (pid == 0) {          //child
     int ex = execvp(cmd[0], cmd);
     err(ex, "execvp");
-   }
+  }
 }
 
 
@@ -107,13 +138,14 @@ void *exec_thread(){
       pthread_mutex_unlock(&mutex);
       return NULL;
     }
-    cmd_init();
-    tokenize();
-    execute();
+    background = 0;
+    in_file_name = out_file_name = NULL;
+    char *cmd[CMD_MAX];
+    tokenize(cmd);
+    execute(cmd);
     executing = 0;
     pthread_cond_broadcast(&await);
     pthread_mutex_unlock(&mutex);
-    cmd_deinit();
   }
   return NULL;
 }
@@ -129,7 +161,7 @@ void *input_thread(){
     cmd_len = read(0, &buffer, BUFF_LEN);
 
     if (cmd_len == 513) {   // Invalid input
-      fprintf(stderr, "Eror ! Input way too long\n");
+      fprintf(stderr, "Error ! Input longer than 512B\n");
       while(getchar() == '\n');
     } else if (strncmp(buffer, "exit\n", strlen("exit\n")) == 0) {
       pthread_mutex_lock(&mutex);
