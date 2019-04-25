@@ -4,18 +4,14 @@
 #include <stdlib.h>
 #include <signal.h>
 
-pthread_mutex_t lock;
+pthread_mutex_t buff;
 pthread_cond_t await;
 
 
-
-
-void err(int code, char* err, int fail){
+void err(int code, char* err){
   if (code) {
-    fprintf(stderr, "Err: %s, code:%d\n", err, code );
-    if (fail) {
-      exit(EXIT_FAILURE);
-    }
+    fprintf(stderr, "Err: %s, code:%d\n", err, code);
+    exit(EXIT_FAILURE);
   }
 }
 
@@ -56,22 +52,34 @@ int main() {
   sa_chld.sa_flags = sa_int.sa_flags = 0;
 
   res = sigaction(SIGCHLD, &sa_chld, NULL);
-  err(res, "sigaction SIGCHLD", 1);
+  err(res, "sigaction SIGCHLD");
   res = sigaction(SIGINT, &sa_int, NULL);
-  err(res, "sigaction SIGINT", 1);
+  err(res, "sigaction SIGINT");
+
+  // mutex and cond setup
+  res = pthread_mutex_init(&buff, NULL);
+  err(res, "pthread_mutex_init buff");
+  res = pthread_cond_init(&await, NULL);
+  err(res, "pthread_cond_init await");
 
   // Create two threads, one to read input
   res = pthread_create(&input, NULL, &input_thread, NULL);
-  err(res, "pthread_create input", 1);
+  err(res, "pthread_create input");
   // Thread to execute commands
   res = pthread_create(&execute, NULL, &exec_thread, NULL);
-  err(res, "pthread_create executre", 1);
+  err(res, "pthread_create execute");
 
   // Wait till the end
   res = pthread_join(input, NULL);
-  err(res, "pthread_join input", 1);
+  err(res, "pthread_join input");
   res = pthread_join(execute, NULL);
-  err(res, "pthread_join execute", 1);
+  err(res, "pthread_join execute");
+
+  // Cleanup
+  res = pthread_mutex_destroy(&buff);
+  err(res, "pthread_mutex_init buff");
+  res = pthread_cond_destroy(&await);
+  err(res, "pthread_cond_init await");
 
   return 0;
 }
