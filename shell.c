@@ -79,6 +79,23 @@ void tokenize() {
 }
 
 
+void execute() {
+  pid_t pid;
+  if ((pid = fork()) < 0) {
+    err(pid, "fork");
+  }
+
+  if (pid > 0) {  //parent
+    waitpid(pid, NULL, 0);
+  }
+
+  if (pid == 0) { //child
+    int ex = execvp(cmd[0], cmd);
+    err(ex, "execvp");
+   }
+}
+
+
 void *exec_thread(){
   while (running) {
     pthread_mutex_lock(&mutex);
@@ -92,20 +109,7 @@ void *exec_thread(){
     }
     cmd_init();
     tokenize();
-    pid_t pid;
-    if ((pid = fork()) < 0) {
-      err(pid, "fork");
-    }
-
-    if (pid > 0) {  //parent
-      waitpid(pid, NULL, 0);
-    }
-
-    if (pid == 0) { //child
-  		int ex = execvp(cmd[0], cmd);
-  		err(ex, "execvp");
-	   }
-
+    execute();
     executing = 0;
     pthread_cond_broadcast(&await);
     pthread_mutex_unlock(&mutex);
