@@ -1,6 +1,5 @@
 #define _POSIX_SOURCE
 #include <ctype.h>
-#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <signal.h>
@@ -10,6 +9,7 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <fcntl.h>
+#include <pthread.h>
 
 
 #define BUFF_LEN 513
@@ -36,7 +36,7 @@ void err(int code, char* err){
 
 
 void SIGINT_handler(){
-  printf("\n$ ");
+  printf("\n");
 }
 
 
