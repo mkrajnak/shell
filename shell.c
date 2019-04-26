@@ -8,6 +8,9 @@
 #include <sys/wait.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <sys/types.h>
+#include <fcntl.h>
+
 
 #define BUFF_LEN 513
 #define CMD_MAX 128 // Not expecting more than 128 tokens per command
@@ -33,8 +36,7 @@ void err(int code, char* err){
 
 
 void SIGINT_handler(){
-  printf("Hanling SIGINT\n");
-  exit(EXIT_SUCCESS);
+  printf("\n$ ");
 }
 
 
@@ -74,28 +76,48 @@ void tokenize(char **cmd) {
     } else if (isspace(buffer[i])) {
       continue;
     } else {
-      if (strncmp(&buffer[i], "&", 1) == 0) {
+      if (strncmp(&buffer[i], "&", 1) == 0) { // &
         background = 1;
+        buffer[i] = '\0';
         ++i;
-      } else if (strncmp(&buffer[i], ">", 1) == 0) {
+      } else if (strncmp(&buffer[i], ">", 1) == 0) {  // >
+        if (out_file_name) {  // filename already set
+          fprintf(stderr, "Multiple redirects are not supported\n");
+          return;
+        }
         buffer[i] = '\0';
         ++i;
         while(isspace(buffer[i]))
           ++i;
+        if (buffer[i] == '\0') { // Last argument is missing
+          fprintf(stderr, "Missing filename\n");
+          return;
+        }
         out_file_name = &buffer[i];
         i = jump_to_next(i);
-      } else if (strncmp(&buffer[i], "<", 1) == 0) {
+        buffer[i] = '\0';
+      } else if (strncmp(&buffer[i], "<", 1) == 0) {  // <
+        if (in_file_name) { // filename already set
+          fprintf(stderr, "Multiple redirects are not supported\n");
+          return;
+        }
         buffer[i] = '\0';
         ++i;
         while(isspace(buffer[i]))
           ++i;
-        i = jump_to_next(i);
+        if (buffer[i] == '\0') { // Last argument is missing
+          fprintf(stderr, "Missing filename\n");
+          return;
+        }
         in_file_name = &buffer[i];
-      } else {
+        i = jump_to_next(i);
+        buffer[i] = '\0';
+      } else {              // command
         cmd[tokens] = &buffer[i];
         ++tokens;
         i = jump_to_next(i);
         if (buffer[i] == '<' || buffer[i] == '>') { // >< without spaces
+          printf("lel\n");
           --i;
         } else {
           buffer[i] = '\0';
@@ -103,11 +125,11 @@ void tokenize(char **cmd) {
       }
     }
   }
-  printf("IN:%s\n", in_file_name);
-  printf("OUT:%s\n", out_file_name);
-  for (int i = 0; i < tokens; i++) {
-    printf("%d: %s\n",i,cmd[i]);
-  }
+  // printf("IN:%s\n", in_file_name);
+  // printf("OUT:%s\n", out_file_name);
+  // for (int i = 0; i < tokens; i++) {
+  //   printf("%d: %s\n",i,cmd[i]);
+  // }
   cmd[tokens] = NULL;  // ! Required by execvp function
 }
 
@@ -121,6 +143,26 @@ void execute(char **cmd) {
   if (pid > 0 && !background) {  //parent
     waitpid(pid, NULL, 0);
   } else if (pid == 0) {          //child
+    int f;
+    int d;
+    if(out_file_name){
+      if ((f = open(out_file_name, O_WRONLY | O_CREAT | O_TRUNC, 0666)) < 0) {
+        err(f, "open");
+      }
+      if ((d = dup2(f, fileno(stdout))) < 0) {
+        err(d, "dup2");
+      }
+      close(f);
+		}
+    if(in_file_name){
+      if ((f = open(in_file_name, O_RDONLY)) < 0) {
+        err(f, "open");
+      }
+      if ((d = dup2(f, fileno(stdin))) < 0) {
+        err(d, "dup2");
+      }
+      close(f);
+		}
     int ex = execvp(cmd[0], cmd);
     err(ex, "execvp");
   }
